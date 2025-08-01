@@ -1,0 +1,37 @@
+from pydantic import BaseModel
+from typing import Optional
+
+class SalesOrder(BaseModel):
+    id: int
+    client_id: int
+    client_type: Optional[int]
+    client_side_id: Optional[int]
+    employee_id: Optional[int]
+    sales_person_id: Optional[int]
+    entered_date: Optional[str]
+    status: Optional[int]
+    is_proposal: Optional[int]
+    is_converted_so: Optional[int]
+    proposal_version: Optional[int]
+    is_invoiced: Optional[int]
+    is_opportunity: Optional[int]
+    nrc: Optional[float]
+    mrc: Optional[float]
+    exp_close_date: Optional[str]
+    opportunity_title: Optional[str]
+    ordered_date: Optional[str]
+    ordered_by_id: Optional[int]
+    completed_date: Optional[str]
+    completed_by_id: Optional[int]
+    notes: Optional[str]
+    claimed_by_id: Optional[int]
+    invoiced_id: Optional[int]
+    total_tax: Optional[float]
+    total_amount: Optional[float]
+    sales_title: Optional[str]
+    sales_stage_id: Optional[int]
+    sales_stage_month: Optional[str]
+    location: Optional[str]
+    description: Optional[str]
+    template_id: Optional[int]
+    is_approved: Optional[int]
