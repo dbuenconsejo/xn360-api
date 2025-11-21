@@ -6,7 +6,7 @@
     "description": "OpenAPI spec for Dispatch Queue Items"
   },
   "servers": [
-    { "url": "http://localhost:3006/api/v2" }
+    { "url": "http://54.176.67.86:3006/api/v2" }
   ],
   "paths": {
     "/dispatch-queue-items": {
