@@ -142,8 +142,15 @@ jobs:
           # Run remote script over SSH. The remote will clone/pull, create .env if needed, then update DB values.
           ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" "bash -s" <<'REMOTE'
           set -e
-          DEPLOY_DIR="/home/${EC2_USER}/xn360-api"
-          mkdir -p "$DEPLOY_DIR"
+          # use remote user's home to avoid relying on ${EC2_USER} expansion
+          DEPLOY_DIR="$HOME/xn360-api"
+          # try to create dir; if permission denied, attempt with sudo and fix ownership
+          if ! mkdir -p "$DEPLOY_DIR"; then
+            echo "mkdir failed; attempting with sudo..."
+            sudo mkdir -p "$DEPLOY_DIR"
+            # try to set ownership back to the remote user (name/group)
+            sudo chown "$(id -un):$(id -gn)" "$DEPLOY_DIR" || true
+          fi
           cd "$DEPLOY_DIR"
 
           # Clone fresh if no git repo, otherwise update to the desired branch.
