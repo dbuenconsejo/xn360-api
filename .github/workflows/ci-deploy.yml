@@ -51,7 +51,29 @@
 #
 # Use the workflow's existing scp/ssh steps to place or generate .env securely.
 
-name: CI Build and Deploy
+# Quick start — easiest (recommended)
+# 1) Add these repository secrets in GitHub (Settings → Secrets):
+#    - EC2_HOST    : EC2 public IP or DNS
+#    - EC2_USER    : remote user (e.g. deploy)
+#    - EC2_SSH_PORT: SSH port (usually 22)
+#    - EC2_SSH_KEY : private SSH key for GitHub Actions to SSH into EC2 (full contents)
+# 2) Make sure this workflow has: permissions: contents: read
+#    (the file already sets this; it allows the workflow's GITHUB_TOKEN to read the repo)
+# 3) How the deploy works (no keys on EC2 needed):
+#    - The workflow SSHes to EC2 (using EC2_SSH_KEY).
+#    - The remote script runs:
+#        git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" .
+#      This uses the Actions-provided GITHUB_TOKEN to fetch code over HTTPS.
+# 4) Test:
+#    - Push a small commit to main and watch Actions run.
+#    - If you want to test manually on the server, run:
+#        git clone --depth 1 --branch main "https://x-access-token:<YOUR_TOKEN>@github.com/<owner>/<repo>" repo-test
+#      (replace <YOUR_TOKEN> with a PAT if testing locally; do not expose tokens publicly)
+# 5) Troubleshooting:
+#    - If git clone fails with 403, ensure the workflow has contents: read and the token isn't revoked.
+#    - If you prefer not to use tokens, use an SSH deploy key on the EC2 host (create keypair, add public key as Repo "Deploy key", keep private key on server).
+
+name: CI Deploy
 
 on:
   push:
@@ -60,89 +82,12 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-
   deploy:
-    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Ensure remote deploy directory exists
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
-          script: |
-            mkdir -p /home/${{ secrets.EC2_USER }}/xn360-api
-
-      - name: Copy docker-compose to EC2
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
-          source: docker-compose.yml
-          target: /home/${{ secrets.EC2_USER }}/xn360-api/docker-compose.yml
-
-      - name: Copy application source to EC2
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
-          # copy repo contents; adjust exclude patterns locally if you want to skip large dirs
-          source: .
-          target: /home/${{ secrets.EC2_USER }}/xn360-api
-
-      - name: Copy .env to EC2 (optional - if you keep .env in repo, otherwise manage env on server)
-        if: ${{ always() }}
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
-          source: .env
-          target: /home/${{ secrets.EC2_USER }}/xn360-api/.env
-
-      - name: Run docker-compose on EC2
+      - name: SSH deploy: clone/pull and start containers
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -151,13 +96,45 @@ jobs:
           port: ${{ secrets.EC2_SSH_PORT }}
           script: |
             set -e
-            cd /home/${{ secrets.EC2_USER }}/xn360-api
-            # If .env is missing and .env.example exists, create .env from .env.example
+            DEPLOY_DIR=/home/${{ secrets.EC2_USER }}/xn360-api
+            BRANCH="${{ github.ref_name }}"
+            if [ -z "$BRANCH" ]; then BRANCH=main; fi
+
+            mkdir -p "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+
+            # Clone fresh if no git repo, otherwise update to the desired branch.
+            if [ ! -d .git ]; then
+              rm -rf ./*
+              git clone --depth 1 --branch "$BRANCH" "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" .
+            else
+              git fetch --all --prune
+              git reset --hard origin/"$BRANCH"
+            fi
+
+            # Ensure .env exists (create from .env.example if available)
             if [ ! -f .env ] && [ -f .env.example ]; then
               cp .env.example .env
               echo ".env created from .env.example"
             fi
-            # Optionally adjust ownership if needed (requires passwordless sudo for deploy user):
-            # sudo chown -R $USER:$USER /home/${{ secrets.EC2_USER }}/xn360-api || true
+
+            # Try to run composer install inside an already-running app container (best-effort)
+            if docker ps --format '{{.Names}}' | grep -q laravel-app; then
+              echo "Running initial composer install inside laravel-app (best-effort)..."
+              docker exec -u www-data laravel-app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader || true
+            else
+              echo "laravel-app container not running; skipping initial composer exec"
+            fi
+
+            # Pull images (if any) and bring up containers
             docker-compose pull || true
-            docker-compose up -d --remove-orphans
+            docker-compose up -d --remove-orphans --build
+
+            # Wait a moment for app container to be ready, then ensure dependencies installed
+            sleep 5
+            if docker ps --format '{{.Names}}' | grep -q laravel-app; then
+              echo "Running composer install inside laravel-app..."
+              docker exec -u www-data laravel-app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader || docker exec laravel-app composer install --no-interaction || true
+            else
+              echo "laravel-app container not found after docker-compose up; skipping composer install"
+            fi
