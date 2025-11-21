@@ -96,6 +96,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
+          # DB secrets (add these in repository Secrets)
+          DB_CONNECTION: ${{ secrets.DB_CONNECTION }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_CONNECTION_SECOND: ${{ secrets.DB_CONNECTION_SECOND }}
+          DB_HOST_SECOND: ${{ secrets.DB_HOST_SECOND }}
+          DB_PORT_SECOND: ${{ secrets.DB_PORT_SECOND }}
+          DB_DATABASE_SECOND: ${{ secrets.DB_DATABASE_SECOND }}
+          DB_USERNAME_SECOND: ${{ secrets.DB_USERNAME_SECOND }}
+          DB_PASSWORD_SECOND: ${{ secrets.DB_PASSWORD_SECOND }}
         run: |
           set -e
 
@@ -107,9 +120,28 @@ jobs:
           echo "$EC2_SSH_KEY" > "$KEYFILE"
           chmod 600 "$KEYFILE"
 
-          # Run remote script over SSH. Pass necessary env vars to the remote session.
-          ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" \
-            "EC2_USER='${EC2_USER}' GITHUB_TOKEN='${GITHUB_TOKEN}' REPO='${REPO}' BRANCH='${BRANCH}' bash -s" <<'REMOTE'
+          # create a temp update file on the runner with DB key=value pairs (expanded from secrets)
+          UPDFILE="$(mktemp)"
+          cat > "$UPDFILE" <<EOF
+DB_CONNECTION=${DB_CONNECTION:-mysql}
+DB_HOST=${DB_HOST}
+DB_PORT=${DB_PORT:-3306}
+DB_DATABASE=${DB_DATABASE}
+DB_USERNAME=${DB_USERNAME}
+DB_PASSWORD=${DB_PASSWORD}
+DB_CONNECTION_SECOND=${DB_CONNECTION_SECOND:-mysql}
+DB_HOST_SECOND=${DB_HOST_SECOND}
+DB_PORT_SECOND=${DB_PORT_SECOND:-3306}
+DB_DATABASE_SECOND=${DB_DATABASE_SECOND}
+DB_USERNAME_SECOND=${DB_USERNAME_SECOND}
+DB_PASSWORD_SECOND=${DB_PASSWORD_SECOND}
+EOF
+
+          # copy the update file to the remote host
+          scp -o StrictHostKeyChecking=no -i "$KEYFILE" -P "${EC2_SSH_PORT}" "$UPDFILE" "${EC2_USER}@${EC2_HOST}:/tmp/deploy_db_updates.env"
+
+          # Run remote script over SSH. The remote will clone/pull, create .env if needed, then update DB values.
+          ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" "bash -s" <<'REMOTE'
           set -e
           DEPLOY_DIR="/home/${EC2_USER}/xn360-api"
           mkdir -p "$DEPLOY_DIR"
@@ -128,6 +160,33 @@ jobs:
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
             echo ".env created from .env.example"
+          fi
+
+          # helper to update or append a key in .env safely
+          update_or_append() {
+            key="$1"
+            value="$2"
+            # escape sed special chars in value
+            safe_value=$(printf '%s' "$value" | sed -e 's/[\/&]/\\&/g')
+            if grep -qE "^${key}=" .env; then
+              sed -i "s/^${key}=.*/${key}=${safe_value}/" .env
+            else
+              printf "%s=%s\n" "$key" "$value" >> .env
+            fi
+          }
+
+          # apply updates from the uploaded file
+          if [ -f /tmp/deploy_db_updates.env ]; then
+            while IFS='=' read -r k v; do
+              # skip empty keys or lines
+              [ -z "$k" ] && continue
+              update_or_append "$k" "$v"
+            done < /tmp/deploy_db_updates.env
+            # remove temporary updates file
+            rm -f /tmp/deploy_db_updates.env
+            echo ".env DB keys updated"
+          else
+            echo "No /tmp/deploy_db_updates.env found on remote; skipping DB update"
           fi
 
           # Try to run composer install inside an already-running app container (best-effort)
@@ -152,5 +211,5 @@ jobs:
           fi
           REMOTE
 
-          # cleanup
-          rm -f "$KEYFILE"
+          # cleanup local temp files
+          rm -f "$KEYFILE" "$UPDFILE"
