@@ -122,20 +122,19 @@ jobs:
 
           # create a temp update file on the runner with DB key=value pairs (expanded from secrets)
           UPDFILE="$(mktemp)"
-          cat > "$UPDFILE" <<EOF
-DB_CONNECTION=${DB_CONNECTION:-mysql}
-DB_HOST=${DB_HOST}
-DB_PORT=${DB_PORT:-3306}
-DB_DATABASE=${DB_DATABASE}
-DB_USERNAME=${DB_USERNAME}
-DB_PASSWORD=${DB_PASSWORD}
-DB_CONNECTION_SECOND=${DB_CONNECTION_SECOND:-mysql}
-DB_HOST_SECOND=${DB_HOST_SECOND}
-DB_PORT_SECOND=${DB_PORT_SECOND:-3306}
-DB_DATABASE_SECOND=${DB_DATABASE_SECOND}
-DB_USERNAME_SECOND=${DB_USERNAME_SECOND}
-DB_PASSWORD_SECOND=${DB_PASSWORD_SECOND}
-EOF
+          printf '%s\n' \
+            "DB_CONNECTION=${DB_CONNECTION:-mysql}" \
+            "DB_HOST=${DB_HOST}" \
+            "DB_PORT=${DB_PORT:-3306}" \
+            "DB_DATABASE=${DB_DATABASE}" \
+            "DB_USERNAME=${DB_USERNAME}" \
+            "DB_PASSWORD=${DB_PASSWORD}" \
+            "DB_CONNECTION_SECOND=${DB_CONNECTION_SECOND:-mysql}" \
+            "DB_HOST_SECOND=${DB_HOST_SECOND}" \
+            "DB_PORT_SECOND=${DB_PORT_SECOND:-3306}" \
+            "DB_DATABASE_SECOND=${DB_DATABASE_SECOND}" \
+            "DB_USERNAME_SECOND=${DB_USERNAME_SECOND}" \
+            "DB_PASSWORD_SECOND=${DB_PASSWORD_SECOND}" > "$UPDFILE"
 
           # copy the update file to the remote host
           scp -o StrictHostKeyChecking=no -i "$KEYFILE" -P "${EC2_SSH_PORT}" "$UPDFILE" "${EC2_USER}@${EC2_HOST}:/tmp/deploy_db_updates.env"
