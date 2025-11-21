@@ -87,8 +87,15 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH deploy: clone/pull and start containers
+      - name: SSH deploy clone/pull and start containers
         uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+        env:
+          BRANCH: ${{ github.ref_name }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -97,7 +104,7 @@ jobs:
           script: |
             set -e
             DEPLOY_DIR=/home/${{ secrets.EC2_USER }}/xn360-api
-            BRANCH="${{ github.ref_name }}"
+            BRANCH="${BRANCH}"
             if [ -z "$BRANCH" ]; then BRANCH=main; fi
 
             mkdir -p "$DEPLOY_DIR"
@@ -106,7 +113,7 @@ jobs:
             # Clone fresh if no git repo, otherwise update to the desired branch.
             if [ ! -d .git ]; then
               rm -rf ./*
-              git clone --depth 1 --branch "$BRANCH" "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" .
+              git clone --depth 1 --branch "$BRANCH" 'https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}' .
             else
               git fetch --all --prune
               git reset --hard origin/"$BRANCH"
