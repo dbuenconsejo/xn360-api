@@ -87,56 +87,70 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH deploy clone/pull and start containers
-        uses: appleboy/ssh-action@master
+      - name: SSH deploy using runner ssh client
         env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
-          script: |
-            set -e
-            DEPLOY_DIR=/home/${{ secrets.EC2_USER }}/xn360-api
-            BRANCH="${BRANCH}"
-            if [ -z "$BRANCH" ]; then BRANCH=main; fi
+        run: |
+          set -e
 
-            mkdir -p "$DEPLOY_DIR"
-            cd "$DEPLOY_DIR"
+          # normalize branch value
+          if [ -z "${BRANCH}" ]; then BRANCH=main; fi
 
-            # Clone fresh if no git repo, otherwise update to the desired branch.
-            if [ ! -d .git ]; then
-              rm -rf ./*
-              git clone --depth 1 --branch "$BRANCH" 'https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}' .
-            else
-              git fetch --all --prune
-              git reset --hard origin/"$BRANCH"
-            fi
+          # write private key to a temp file
+          KEYFILE="$(mktemp)"
+          echo "$EC2_SSH_KEY" > "$KEYFILE"
+          chmod 600 "$KEYFILE"
 
-            # Ensure .env exists (create from .env.example if available)
-            if [ ! -f .env ] && [ -f .env.example ]; then
-              cp .env.example .env
-              echo ".env created from .env.example"
-            fi
+          # Run remote script over SSH. Pass necessary env vars to the remote session.
+          ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" \
+            "EC2_USER='${EC2_USER}' GITHUB_TOKEN='${GITHUB_TOKEN}' REPO='${REPO}' BRANCH='${BRANCH}' bash -s" <<'REMOTE'
+          set -e
+          DEPLOY_DIR="/home/${EC2_USER}/xn360-api"
+          mkdir -p "$DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
 
-            # Try to run composer install inside an already-running app container (best-effort)
-            if docker ps --format '{{.Names}}' | grep -q laravel-app; then
-              echo "Running initial composer install inside laravel-app (best-effort)..."
-              docker exec -u www-data laravel-app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader || true
-            else
-              echo "laravel-app container not running; skipping initial composer exec"
-            fi
+          # Clone fresh if no git repo, otherwise update to the desired branch.
+          if [ ! -d .git ]; then
+            rm -rf ./*
+            git clone --depth 1 --branch "$BRANCH" "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}" .
+          else
+            git fetch --all --prune
+            git reset --hard origin/"$BRANCH"
+          fi
 
-            # Pull images (if any) and bring up containers
-            docker-compose pull || true
-            docker-compose up -d --remove-orphans --build
+          # Ensure .env exists (create from .env.example if available)
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            cp .env.example .env
+            echo ".env created from .env.example"
+          fi
 
-            # Wait a moment for app container to be ready, then ensure dependencies installed
-            sleep 5
-            if docker ps --format '{{.Names}}' | grep -q laravel-app; then
-              echo "Running composer install inside laravel-app..."
-              docker exec -u www-data laravel-app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader || docker exec laravel-app composer install --no-interaction || true
-            else
-              echo "laravel-app container not found after docker-compose up; skipping composer install"
-            fi
+          # Try to run composer install inside an already-running app container (best-effort)
+          if docker ps --format '{{.Names}}' | grep -q laravel-app; then
+            echo "Running initial composer install inside laravel-app (best-effort)..."
+            docker exec -u www-data laravel-app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader || true
+          else
+            echo "laravel-app container not running; skipping initial composer exec"
+          fi
+
+          # Pull images (if any) and bring up containers
+          docker-compose pull || true
+          docker-compose up -d --remove-orphans --build
+
+          # Wait a moment, then ensure dependencies installed
+          sleep 5
+          if docker ps --format '{{.Names}}' | grep -q laravel-app; then
+            echo "Running composer install inside laravel-app..."
+            docker exec -u www-data laravel-app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader || docker exec laravel-app composer install --no-interaction || true
+          else
+            echo "laravel-app container not found after docker-compose up; skipping composer install"
+          fi
+          REMOTE
+
+          # cleanup
+          rm -f "$KEYFILE"
