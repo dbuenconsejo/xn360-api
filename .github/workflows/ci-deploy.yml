@@ -89,11 +89,6 @@ jobs:
     steps:
       - name: SSH deploy clone/pull and start containers
         uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
         env:
           BRANCH: ${{ github.ref_name }}
         with:
