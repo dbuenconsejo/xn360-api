@@ -140,16 +140,15 @@ jobs:
           scp -o StrictHostKeyChecking=no -i "$KEYFILE" -P "${EC2_SSH_PORT}" "$UPDFILE" "${EC2_USER}@${EC2_HOST}:/tmp/deploy_db_updates.env"
 
           # Run remote script over SSH. The remote will clone/pull, create .env if needed, then update DB values.
-          ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" "bash -s" <<'REMOTE'
+          ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" "bash -s" <<REMOTE
           set -e
-          # use remote user's home to avoid relying on ${EC2_USER} expansion
-          DEPLOY_DIR="$HOME/xn360-api"
+          # expanded locally: ensure DEPLOY_DIR uses the provided EC2_USER
+          DEPLOY_DIR="/home/${EC2_USER}/xn360-api"
           # try to create dir; if permission denied, attempt with sudo and fix ownership
           if ! mkdir -p "$DEPLOY_DIR"; then
             echo "mkdir failed; attempting with sudo..."
             sudo mkdir -p "$DEPLOY_DIR"
-            # try to set ownership back to the remote user (name/group)
-            sudo chown "$(id -un):$(id -gn)" "$DEPLOY_DIR" || true
+            sudo chown "${EC2_USER}:${EC2_USER}" "$DEPLOY_DIR" || true
           fi
           cd "$DEPLOY_DIR"
 
