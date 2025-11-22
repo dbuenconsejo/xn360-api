@@ -5,7 +5,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['http://localhost:5174'],
+    'allowed_origins' => ['http://localhost:5174', 'http://localhost:5173/', 'http://xn360-fe-dev.s3-website-us-west-1.amazonaws.com'],
 
     'allowed_origins_patterns' => [],
 
