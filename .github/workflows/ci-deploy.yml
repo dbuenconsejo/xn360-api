@@ -142,15 +142,23 @@ jobs:
           # Run remote script over SSH. The remote will clone/pull, create .env if needed, then update DB values.
           ssh -o StrictHostKeyChecking=no -i "$KEYFILE" -p "${EC2_SSH_PORT}" "${EC2_USER}@${EC2_HOST}" "bash -s" <<REMOTE
           set -e
-          # expanded locally: ensure DEPLOY_DIR uses the provided EC2_USER
-          DEPLOY_DIR="/home/${EC2_USER}/xn360-api"
-          # try to create dir; if permission denied, attempt with sudo and fix ownership
-          if ! mkdir -p "$DEPLOY_DIR"; then
+          # use remote user's home; escape $HOME so it remains literal for the remote shell
+          DEPLOY_DIR="\$HOME/xn360-api"
+          # try to create dir; if it fails try sudo; if sudo not allowed, fall back to /tmp
+          if mkdir -p "\$DEPLOY_DIR" 2>/dev/null; then
+            :
+          else
             echo "mkdir failed; attempting with sudo..."
-            sudo mkdir -p "$DEPLOY_DIR"
-            sudo chown "${EC2_USER}:${EC2_USER}" "$DEPLOY_DIR" || true
+            if sudo -n true 2>/dev/null; then
+              sudo mkdir -p "\$DEPLOY_DIR"
+              sudo chown "\$USER:\$USER" "\$DEPLOY_DIR" || true
+            else
+              echo "sudo not available for this user; falling back to /tmp/xn360-api"
+              DEPLOY_DIR="/tmp/xn360-api"
+              mkdir -p "\$DEPLOY_DIR"
+            fi
           fi
-          cd "$DEPLOY_DIR"
+          cd "\$DEPLOY_DIR"
 
           # Clone fresh if no git repo, otherwise update to the desired branch.
           if [ ! -d .git ]; then
